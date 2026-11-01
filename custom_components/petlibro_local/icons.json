@@ -33,6 +33,12 @@
       },
       "last_refill": {
         "default": "mdi:grain"
+      },
+      "device_time": {
+        "default": "mdi:clock-outline"
+      },
+      "clock_skew": {
+        "default": "mdi:clock-alert-outline"
       }
     },
     "switch": {

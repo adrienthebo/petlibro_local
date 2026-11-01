@@ -25,6 +25,8 @@ broker connection rather than opening its own.
 | Last cleaned | `sensor` | timestamp, Home Assistant side, survives restarts |
 | Last refill | `sensor` | timestamp, Home Assistant side, survives restarts |
 | Mark cleaned / Mark refilled | `button` | stamps the matching sensor with now |
+| Device time | `sensor` | `ts` from each heartbeat, diagnostic, disabled by default |
+| Clock skew | `sensor` | device clock minus HA's, seconds, diagnostic, disabled by default |
 
 The feeder itself reports nothing about cleaning or refilling, so those four are bookkeeping.
 The sensors are read-only and carry the `timestamp` device class, so the frontend shows them

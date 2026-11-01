@@ -72,6 +72,12 @@
       },
       "last_refill": {
         "name": "Last refill"
+      },
+      "device_time": {
+        "name": "Device time"
+      },
+      "clock_skew": {
+        "name": "Clock skew"
       }
     },
     "switch": {
