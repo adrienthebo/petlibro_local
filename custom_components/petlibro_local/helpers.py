@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components import mqtt
@@ -27,6 +28,72 @@ def new_msg_id() -> str:
     one.
     """
     return uuid.uuid4().hex
+
+
+def time_zone_fields(now: datetime) -> dict[str, int]:
+    """Return the time zone fields the vendor cloud sends with NTP and NTP_SYNC.
+
+    Matches the cloud's NTP reply captured from a PLAF103: the current UTC
+    offset in seconds, the offset after each of the next two changes with the
+    epoch ms it takes effect, and the current offset in whole hours. A zone
+    without offset changes repeats the current offset with a time of 0.
+
+    Args:
+        now: The current time, aware, in the zone to describe.
+    """
+    offset = _utc_offset_seconds(now.tzinfo, int(now.timestamp()))
+    changes = _next_offset_changes(now, 2)
+    while len(changes) < 2:
+        changes.append((0, offset))
+
+    return {
+        "timezoneOffsetSeconds": offset,
+        "nextDSTOffsetSeconds": changes[0][1],
+        "nextDSTTransitionTs": changes[0][0] * 1000,
+        "secondNextDSTOffsetSeconds": changes[1][1],
+        "secondNextDSTTransitionTs": changes[1][0] * 1000,
+        "timezone": offset // 3600,
+    }
+
+
+def _utc_offset_seconds(tz: Any, epoch: int) -> int:
+    """Return the UTC offset of a zone at an epoch second, in seconds."""
+    offset = datetime.fromtimestamp(epoch, tz).utcoffset()
+    return int(offset.total_seconds()) if offset else 0
+
+
+def _next_offset_changes(now: datetime, count: int) -> list[tuple[int, int]]:
+    """Find up to ``count`` UTC offset changes after ``now``.
+
+    Steps a day at a time for up to two years, then bisects to the second at
+    which the new offset starts.
+
+    Returns:
+        (epoch second, new offset in seconds) for each change found.
+    """
+    day = 86400
+    tz = now.tzinfo
+    start = int(now.timestamp())
+    offset = _utc_offset_seconds(tz, start)
+    changes: list[tuple[int, int]] = []
+
+    lo = start
+    while len(changes) < count and lo < start + 2 * 366 * day:
+        hi = lo + day
+        if _utc_offset_seconds(tz, hi) == offset:
+            lo = hi
+            continue
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if _utc_offset_seconds(tz, mid) == offset:
+                lo = mid
+            else:
+                hi = mid
+        offset = _utc_offset_seconds(tz, hi)
+        changes.append((hi, offset))
+        lo = hi
+
+    return changes
 
 
 async def publish_payload(

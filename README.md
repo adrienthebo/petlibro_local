@@ -80,7 +80,11 @@ keeps asking for the time until something answers. A broker that only listens wi
 republish forever. This integration plays the part the vendor cloud used to:
 
 - acks every event on `device/event/sub` with `code: 0`, retransmissions included
-- answers `NTP` on `device/ntp/sub` with the current time and your HA time zone's UTC offset
+- answers `NTP` on `device/ntp/sub` with the current time, your HA time zone's UTC offset and
+  its next two DST changes
+- sends `NTP_SYNC` on `device/ntp/sub` when a heartbeat shows the device clock more than 60s
+  off, at most once every 5 minutes. The feeder runs its own schedule on that clock, and loses
+  minutes an hour without it.
 - watches `device/service/post` for the device's verdict on commands we send, so a command
   that does not land raises an error instead of silently doing nothing
 

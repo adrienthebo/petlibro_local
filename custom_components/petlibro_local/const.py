@@ -80,6 +80,7 @@ CMD_DETECTION_EVENT = "DETECTION_EVENT"
 # Other
 CMD_HEARTBEAT = "HEARTBEAT"
 CMD_NTP = "NTP"
+CMD_NTP_SYNC = "NTP_SYNC"
 
 # GRAIN_OUTPUT_EVENT execution steps
 GRAIN_STEP_START = "GRAIN_START"
@@ -92,6 +93,16 @@ AVAILABILITY_TIMEOUT = 210
 # How long to wait for the device's ack on device/service/post before telling
 # the user the command did not land.
 COMMAND_ACK_TIMEOUT = 8
+
+# The device runs its feeding schedule on its own clock and only asks for the
+# time on boot and when a plan fires, and a PLAF103 on firmware 1.1.1 was seen
+# losing about 3.5 seconds a minute. When a heartbeat's ts is further than this
+# many seconds from ours, push the time with NTP_SYNC.
+NTP_SYNC_DRIFT_THRESHOLD = 60
+
+# Minimum seconds between NTP_SYNC pushes, so a device that ignores them is not
+# sent one on every heartbeat.
+NTP_SYNC_MIN_INTERVAL = 300
 
 # Number of recently seen (cmd, msgId, execStep) tuples remembered so that the
 # device's retransmissions get re-acked but not processed twice.

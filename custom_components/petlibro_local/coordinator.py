@@ -7,7 +7,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components import mqtt
@@ -24,6 +24,7 @@ from .const import (
     CMD_GET_FEEDING_PLAN,
     CMD_HEARTBEAT,
     CMD_NTP,
+    CMD_NTP_SYNC,
     COMMAND_ACK_TIMEOUT,
     CONF_FEEDING_PLAN_REPLY,
     CONF_MODEL,
@@ -32,9 +33,17 @@ from .const import (
     DOMAIN,
     FEEDING_PLAN_REPLY_EMPTY,
     MAINTENANCE_KEYS,
+    NTP_SYNC_DRIFT_THRESHOLD,
+    NTP_SYNC_MIN_INTERVAL,
     SEEN_EVENT_CACHE_SIZE,
 )
-from .helpers import PetlibroCommandError, new_msg_id, publish_command, publish_payload
+from .helpers import (
+    PetlibroCommandError,
+    new_msg_id,
+    publish_command,
+    publish_payload,
+    time_zone_fields,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +103,9 @@ class PetlibroCoordinator:
 
         self._available = False
         self._cancel_availability: Callable[[], None] | None = None
+
+        # When the last NTP_SYNC went out (time.monotonic()), for _check_clock.
+        self._last_ntp_sync: float | None = None
 
     @property
     def device_state(self) -> dict[str, Any]:
@@ -287,6 +299,7 @@ class PetlibroCoordinator:
             return
 
         self._note_message()
+        self._check_clock(payload)
 
         for listener in list(self._heartbeat_listeners):
             listener(payload)
@@ -296,14 +309,25 @@ class PetlibroCoordinator:
         """Handle a message on device/ntp/post.
 
         The device asks for the time on boot and keeps asking until answered,
-        so reply with the same shape the vendor's broker did.
+        so reply with the same shape the vendor's broker did. It also answers
+        our NTP_SYNC here, which needs no reply.
         """
         payload = self._parse(msg)
-        if payload is None or payload.get("cmd") != CMD_NTP:
+        if payload is None:
             return
 
-        self._note_message()
-        self.hass.async_create_task(self._async_reply_ntp())
+        cmd = payload.get("cmd")
+        if cmd == CMD_NTP:
+            self._note_message()
+            self.hass.async_create_task(self._async_reply_ntp())
+        elif cmd == CMD_NTP_SYNC:
+            self._note_message()
+            _LOGGER.debug(
+                "Device answered NTP_SYNC (msgId %s, code %s, ts %s)",
+                payload.get("msgId"),
+                payload.get("code"),
+                payload.get("ts"),
+            )
 
     @callback
     def _service_ack_received(self, msg: mqtt.ReceiveMessage) -> None:
@@ -372,6 +396,32 @@ class PetlibroCoordinator:
         if device is not None:
             device_registry.async_update_device(device.id, **updates)
 
+    @callback
+    def _check_clock(self, payload: dict[str, Any]) -> None:
+        """Push the time with NTP_SYNC if the device clock is off.
+
+        The heartbeat's ts is the device's clock. A sync is sent when it is
+        more than NTP_SYNC_DRIFT_THRESHOLD seconds from ours.
+        """
+        device_ts = payload.get("ts")
+        if not isinstance(device_ts, int):
+            return
+
+        drift = abs(device_ts / 1000 - time.time())
+        if drift <= NTP_SYNC_DRIFT_THRESHOLD:
+            return
+
+        now = time.monotonic()
+        if (
+            self._last_ntp_sync is not None
+            and now - self._last_ntp_sync < NTP_SYNC_MIN_INTERVAL
+        ):
+            return
+
+        self._last_ntp_sync = now
+        _LOGGER.debug("Device clock is %.0fs off, sending NTP_SYNC", drift)
+        self.hass.async_create_task(self._async_sync_ntp())
+
     # ------------------------------------------------------------------
     # Outbound protocol answers
     # ------------------------------------------------------------------
@@ -410,13 +460,13 @@ class PetlibroCoordinator:
 
     async def _async_reply_ntp(self) -> None:
         """Answer the device's NTP request on device/ntp/sub."""
-        offset = dt_util.now().utcoffset() or timedelta(0)
         reply = {
             "cmd": CMD_NTP,
             "ts": int(time.time() * 1000),
             "code": 0,
             "calibrationTag": True,
-            "timezone": int(offset.total_seconds() // 3600),
+            **time_zone_fields(dt_util.now()),
+            "linkId": new_msg_id(),
         }
 
         try:
@@ -426,6 +476,30 @@ class PetlibroCoordinator:
             return
 
         _LOGGER.debug("Answered NTP request with %s", reply)
+
+    async def _async_sync_ntp(self) -> None:
+        """Push the current time to the device on device/ntp/sub.
+
+        Unlike the NTP reply, this is unsolicited and carries its own msgId,
+        which the device echoes back on device/ntp/post. The ts in that echo
+        is the device clock from before the sync; the next heartbeat shows
+        whether it took.
+        """
+        sync = {
+            "cmd": CMD_NTP_SYNC,
+            "ts": int(time.time() * 1000),
+            "msgId": new_msg_id(),
+            **time_zone_fields(dt_util.now()),
+            "linkId": new_msg_id(),
+        }
+
+        try:
+            await publish_payload(self.hass, self.topics["ntp_reply"], sync)
+        except PetlibroCommandError as err:
+            _LOGGER.warning("Could not send NTP_SYNC: %s", err)
+            return
+
+        _LOGGER.debug("Sent NTP_SYNC %s", sync)
 
     async def async_request_state(self) -> None:
         """Ask the device for its full attribute state."""
