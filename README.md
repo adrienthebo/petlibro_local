@@ -80,6 +80,9 @@ keeps asking for the time until something answers. A broker that only listens wi
 republish forever. This integration plays the part the vendor cloud used to:
 
 - acks every event on `device/event/sub` with `code: 0`, retransmissions included
+- does not ack the device's answer to `ATTR_GET_SERVICE`, which also arrives on
+  `device/event/post`: the device reads that ack as a new request and answers again, in a
+  loop about twice a second
 - answers `NTP` on `device/ntp/sub` with the current time, your HA time zone's UTC offset and
   its next two DST changes
 - sends `NTP_SYNC` on `device/ntp/sub` when a heartbeat shows the device clock more than 60s

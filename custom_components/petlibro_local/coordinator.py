@@ -264,6 +264,10 @@ class PetlibroCoordinator:
         retransmissions of events we have already seen -- the device retried
         precisely because it did not get the first ack. Only the first copy is
         dispatched to entities.
+
+        The device also posts its answer to ATTR_GET_SERVICE here. That answer
+        is not acked: the device takes the ack as a fresh ATTR_GET_SERVICE and
+        answers again, about twice a second for as long as we keep acking.
         """
         payload = self._parse(msg)
         if payload is None:
@@ -273,12 +277,12 @@ class PetlibroCoordinator:
 
         cmd = payload.get("cmd")
         msg_id = payload.get("msgId")
-        if cmd and msg_id:
+        if cmd and msg_id and cmd != CMD_ATTR_GET:
             self.hass.async_create_task(self._async_ack_event(cmd, payload))
 
         key = (cmd or "", msg_id or "", payload.get("execStep"))
         if msg_id and key in self._seen_events:
-            _LOGGER.debug("Re-acked duplicate %s (msgId %s)", cmd, msg_id)
+            _LOGGER.debug("Duplicate %s (msgId %s)", cmd, msg_id)
             return
         if msg_id:
             self._seen_events.append(key)
